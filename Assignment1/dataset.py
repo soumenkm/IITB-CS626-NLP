@@ -41,8 +41,8 @@ class Dataset:
             for word, tag in sent:
                 word_seq.append(word)
                 tag_seq.append(tag)
-        S = set(tag_seq)
-        V = set(word_seq + ["<unk>"])
+        S = sorted(list(set(tag_seq)))
+        V = sorted(list(set(word_seq + ["<unk>"])))
         
         unigram_count = defaultdict(int)
         bigram_count = defaultdict(int)
@@ -59,10 +59,10 @@ class Dataset:
                 tj = tag_seq[i+1]
                 bigram_count[(ti, tj)] += 1
             
-            # Get emission counts: C(w_i, t_i) for all (w_i, t_i) in V x S
-            emission_count[(wi, ti)] += 1
-            if ("<unk>", ti) not in emission_count:
-                emission_count[("<unk>", ti)] = 0 # Handles unknown word emission
+            # Get emission counts: C(w_i, t_i) for all (ti, wi) in S x V
+            emission_count[(ti, wi)] += 1
+            if (ti, "<unk>") not in emission_count:
+                emission_count[(ti, "<unk>")] = 0 # Handles unknown word emission
         
         # Ensures that all possible pair of bigram exists
         for ti in S:
@@ -71,10 +71,10 @@ class Dataset:
                     bigram_count[(ti, tj)] = 0
         
         # Ensures that all possible pair of emission exists
-        for wi in V:
-            for ti in S:
-                if (wi, ti) not in emission_count:
-                    emission_count[(wi, ti)] = 0
+        for ti in S:
+            for wi in V:
+                if (ti, wi) not in emission_count:
+                    emission_count[(ti, wi)] = 0
         
         return {"S": S, "V": V, "ugc": unigram_count, "bgc": bigram_count, "emc": emission_count}
     
@@ -94,16 +94,16 @@ class Dataset:
             bigram_prob[(ti, tj)] = (bigram_count[(ti, tj)] + 1) / (unigram_count[ti] + len(S))
         
         # Get emission prob with Laplace smoothing
-        for (wi, ti) in emission_count.keys():
-            emission_prob[(wi, ti)] = (emission_count[(wi, ti)] + 1) / (unigram_count[ti] + len(V))
+        for (ti, wi) in emission_count.keys():
+            emission_prob[(ti, wi)] = (emission_count[(ti, wi)] + 1) / (unigram_count[ti] + len(V))
             
         # Check if the prob dist are valid
         a = sum([sum([v for k,v in bigram_prob.items() if k[0] == t]) for t in S])
-        b = sum([sum([v for k,v in emission_prob.items() if k[1] == t]) for t in S])
+        b = sum([sum([v for k,v in emission_prob.items() if k[0] == t]) for t in S])
         assert abs(a - len(S)) < 1e-3, f"a ({a}) must be equal to {len(S)}"
         assert abs(b - len(S)) < 1e-3, f"b ({b}) must be equal to {len(S)}"
         
-        return {"S": S, "V": V, "T": len(S), "W": len(V), "bgp": bigram_prob, "emp": emission_prob}
+        return {"S": S, "V": V, "T": len(S), "W": len(V), "transition": bigram_prob, "emission": emission_prob}
 
 def main():
     dataset = Dataset()
