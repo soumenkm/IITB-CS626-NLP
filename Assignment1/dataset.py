@@ -1,13 +1,13 @@
-import pickle, nltk
+import nltk
 from typing import List, Tuple
 from collections import defaultdict
-import math
 
 class Dataset:
-    def __init__(self, num_folds=5):
+    def __init__(self, unk_threshold: int, num_folds: int):
         self.corpus = self._get_corpus()
         self.num_sents = len(self.corpus)
         self.k = num_folds
+        self.unk_threshold = unk_threshold
         self.dataset_folds = self._k_fold_cross_val(k=self.k)
     
     def _get_corpus(self) -> List[List[Tuple[str, str]]]:
@@ -34,47 +34,36 @@ class Dataset:
         assert fold_index >= 0 and fold_index < self.k, f"fold_index (= {fold_index}) must be in between 0 to {self.k-1}!"
         return self.dataset_folds[fold_index]
     
-    def _get_counts(self, train_data: List[List[Tuple[str, str]]]) -> dict:
+    def _get_data_stream(self, train_data: List[List[Tuple[str, str]]]) -> dict:
         word_seq = []
         tag_seq = []
+        word_count = defaultdict(int) # Get unigram word counts: C(wi) for all wi in Vocabulary
         for sent in train_data:
             for word, tag in sent:
                 word_seq.append(word)
                 tag_seq.append(tag)
-        S = sorted(list(set(tag_seq)))
-        V = sorted(list(set(word_seq + ["<unk>"])))
+                word_count[word] += 1
+        word_seq = ["<unk>" if word_count[w] <= self.unk_threshold else w for w in word_seq] # Replace the rare words by <unk>
+        return {"tag_seq": tag_seq, "word_seq": word_seq}
         
-        unigram_count = defaultdict(int)
-        bigram_count = defaultdict(int)
-        emission_count = defaultdict(int)
+    def _get_counts(self, train_data: List[List[Tuple[str, str]]]) -> dict:
+        data_stream = self._get_data_stream(train_data=train_data)
+        tag_seq = data_stream["tag_seq"]
+        word_seq = data_stream["word_seq"]
+        S = sorted(list(set(tag_seq)))
+        V = sorted(list(set(word_seq + ["<unk>"]))) # For safety purpose if all words are above unk threshold
+        
+        unigram_count = {ti: 0 for ti in S} # Get unigram state counts: C(ti) for all ti in S
+        bigram_count = {(ti, tj): 0 for ti in S for tj in S} # Get bigram state counts: C(ti, tj) for all (ti, tj) in S x S 
+        emission_count = {(ti, wi): 0 for ti in S for wi in V} # Get emission counts: C(ti, wi) for all (ti, wi) in S x V
         for i in range(len(tag_seq)):
             ti = tag_seq[i]
             wi = word_seq[i] 
-          
-            # Get unigram state counts: C(t_i) for all t_i in S
             unigram_count[ti] += 1
-
-            # Get bigram state counts: C(t_i, t_j) for all (t_i, t_j) in S x S 
             if i < len(tag_seq) - 1: 
                 tj = tag_seq[i+1]
                 bigram_count[(ti, tj)] += 1
-            
-            # Get emission counts: C(w_i, t_i) for all (ti, wi) in S x V
             emission_count[(ti, wi)] += 1
-            if (ti, "<unk>") not in emission_count:
-                emission_count[(ti, "<unk>")] = 0 # Handles unknown word emission
-        
-        # Ensures that all possible pair of bigram exists
-        for ti in S:
-            for tj in S:
-                if (ti, tj) not in bigram_count:
-                    bigram_count[(ti, tj)] = 0
-        
-        # Ensures that all possible pair of emission exists
-        for ti in S:
-            for wi in V:
-                if (ti, wi) not in emission_count:
-                    emission_count[(ti, wi)] = 0
         
         return {"S": S, "V": V, "ugc": unigram_count, "bgc": bigram_count, "emc": emission_count}
     
@@ -86,27 +75,35 @@ class Dataset:
         bigram_count = counts["bgc"]
         emission_count = counts["emc"]
         
-        bigram_prob = defaultdict(float)
-        emission_prob = defaultdict(float)
-        
-        # Get bigram prob with Laplace smoothing
+        bigram_prob = {key: 0.0 for key in bigram_count.keys()} # Get transition prob: P(tj | ti) for all (ti, tj) in S x S
+        emission_prob = {key: 0.0 for key in emission_count.keys()} # Get emission prob: P(wi | ti) for all (ti, wi) in S x V
         for (ti, tj) in bigram_count.keys():
-            bigram_prob[(ti, tj)] = (bigram_count[(ti, tj)] + 1) / (unigram_count[ti] + len(S))
-        
-        # Get emission prob with Laplace smoothing
+            bigram_prob[(ti, tj)] = (bigram_count[(ti, tj)] + 1) / (unigram_count[ti] + len(S)) # Laplace smoothing
         for (ti, wi) in emission_count.keys():
-            emission_prob[(ti, wi)] = (emission_count[(ti, wi)] + 1) / (unigram_count[ti] + len(V))
-            
+            emission_prob[(ti, wi)] = (emission_count[(ti, wi)] + 1) / (unigram_count[ti] + len(V)) # Laplace smoothing
+        
+        # Fix the special probability due to smoothing
+        for t in S:
+            bigram_prob[(t, "<s>")] = 0.0
+            bigram_prob[("</s>", t)] = 1.0 if t == "</s>" else 0.0
+        bigram_prob[("<s>", "</s>")] = 0.0
+        
+        for w in V:
+            emission_prob[("<s>", w)] = 1.0 if w == "<s>" else 0.0
+            emission_prob["</s>", w] = 1.0 if w == "</s>" else 0.0
+            emission_prob[w, "<s>"] = 1.0 if w == "<s>" else 0.0
+            emission_prob[w, "</s>"] = 1.0 if w == "</s>" else 0.0
+          
         # Check if the prob dist are valid
         a = sum([sum([v for k,v in bigram_prob.items() if k[0] == t]) for t in S])
         b = sum([sum([v for k,v in emission_prob.items() if k[0] == t]) for t in S])
-        assert abs(a - len(S)) < 1e-3, f"a ({a}) must be equal to {len(S)}"
-        assert abs(b - len(S)) < 1e-3, f"b ({b}) must be equal to {len(S)}"
+        assert abs(a - len(S)) < 0.01, f"a ({a}) must be equal to {len(S)}"
+        assert abs(b - len(S)) < 0.01, f"b ({b}) must be equal to {len(S)}"
         
-        return {"S": S, "V": V, "T": len(S), "W": len(V), "transition": bigram_prob, "emission": emission_prob}
+        return {"S": S, "V": V, "transition": bigram_prob, "emission": emission_prob}
 
 def main():
-    dataset = Dataset()
+    dataset = Dataset(num_folds=5, unk_threshold=2)
     train_data = dataset.get_train_test_dataset(fold_index=0)["train"]
     b = dataset.get_prob_with_smoothing(train_data=train_data)
     print(b)

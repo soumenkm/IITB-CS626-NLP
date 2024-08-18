@@ -1,31 +1,34 @@
-import pickle
-import math
 from dataset import Dataset
 import numpy as np
 from typing import List, Tuple
 
 class HMM:
-    def __init__(self):
-        self.dataset = Dataset()
+    def __init__(self, num_folds: int, unk_threshold: int, fold_index: int):
+        self.k = num_folds
+        self.unk_threshold = unk_threshold
+        self.dataset = Dataset(num_folds=self.k, unk_threshold=self.unk_threshold)
+        self.fold_index = fold_index
+        self.params = self._train()
     
-    def train(self, fold_index: int) -> dict:
-        train_data = self.dataset.get_train_test_dataset(fold_index=fold_index)["train"]
+    def _train(self) -> dict:
+        train_data = self.dataset.get_train_test_dataset(fold_index=self.fold_index)["train"]
         params = self.dataset.get_prob_with_smoothing(train_data=train_data)
         return params
     
-    def viterbi_decode(self, word_seq: List[str], params: dict) -> List[str]:
+    def viterbi_decode(self, word_seq: List[str]) -> List[str]:
         if word_seq[0] != "<s>" and word_seq[-1] != "</s>":
             word_seq = ["<s>"] + word_seq + ["</s>"]
-        V = params["V"] # list of words
+        V = self.params["V"] # list of words
         for i, w in enumerate(word_seq):
             if w not in V:
                 word_seq[i] = "<unk>"
                 
         n = len(word_seq) # num of observed words
-        T = params["T"] # num of hidden tag states
-        S = params["S"] # list of tag states
-        A = params["transition"] # transition prob of tags P(tj | ti) => A(ti, tj)
-        B = params["emission"] # emission prob of word P(wi | ti) => B(ti, wi)
+        S = self.params["S"] # list of tag states
+        T = len(S) # num of hidden tag states
+
+        A = self.params["transition"] # transition prob of tags P(tj | ti) => A(ti, tj)
+        B = self.params["emission"] # emission prob of word P(wi | ti) => B(ti, wi)
         DP = np.zeros(shape=(T, n))
         BP = np.zeros(shape=(T, n))
         
@@ -53,10 +56,9 @@ class HMM:
         return [S[t] for t in tag_seq]
                     
 def main():
-    hmm = HMM()
-    params = hmm.train(fold_index=0)
-    word_seq = "She is beautiful .".split(" ")
-    out = hmm.viterbi_decode(word_seq=word_seq, params=params)
+    hmm = HMM(num_folds=5, unk_threshold=2, fold_index=0)
+    word_seq = "Nvidia beats Apple in market cap in 2024 .".split(" ")
+    out = hmm.viterbi_decode(word_seq=word_seq)
     print(word_seq)
     print(out)
 
