@@ -99,8 +99,21 @@ class Dataset:
         b = sum([sum([v for k,v in emission_prob.items() if k[0] == t]) for t in S])
         assert abs(a - len(S)) < 0.01, f"a ({a}) must be equal to {len(S)}"
         assert abs(b - len(S)) < 0.01, f"b ({b}) must be equal to {len(S)}"
-        
         return {"S": S, "V": V, "transition": bigram_prob, "emission": emission_prob}
+    
+    @staticmethod
+    def prepare_dataloader(data: List[List[Tuple[str, str]]]) -> dict:
+        input_words = []
+        target_tags = []
+        for sent in data:
+            words = []
+            tags = []
+            for w, t in sent:
+                words.append(w)
+                tags.append(t)
+            input_words.append(words)
+            target_tags.append(tags)
+        return {"input_words": input_words, "target_tags": target_tags}
 
 def main():
     dataset = Dataset(num_folds=5, unk_threshold=2)
