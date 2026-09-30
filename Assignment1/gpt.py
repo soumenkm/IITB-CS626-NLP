@@ -1,6 +1,6 @@
 import openai
 
-openai.api_key = 'sk-BMXKbZ7rS9XBN9GV2I9ECla-QU4_z4dsgQeb6egTvjT3BlbkFJihF14nU3K2U7GJ4JLZZM0nm6TJv9Jym1jxjfdRSnsA'
+openai.api_key = None
 
 def get_pos_tags_with_gpt(sentences):
     formatted_sentences = "\n".join(sentences)
